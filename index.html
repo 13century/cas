@@ -705,28 +705,40 @@
       const grid = document.getElementById('gatesGrid');
       grid.innerHTML = '';
       for (let row = 0; row < 5; row++) {
+        gatesGridData[row] = [];
         for (let col = 0; col < 6; col++) {
           const cell = document.createElement('div');
           cell.className = 'cell';
           cell.id = `cell-${row}-${col}`;
           cell.textContent = '?';
           grid.appendChild(cell);
-        }
-      }
-      // Заполняем данными
-      for (let row = 0; row < 5; row++) {
-        gatesGridData[row] = [];
-        for (let col = 0; col < 6; col++) {
-          gatesGridData[row][col] = getRandomGatesSymbolIndex();
+          // Генерируем символ с повышенной вероятностью совпадения
+          gatesGridData[row][col] = getRandomGatesSymbolIndex(row, col);
         }
       }
       renderGatesGrid();
     }
 
-    function getRandomGatesSymbolIndex() {
-      // scatter реже
+    // Модифицированная функция генерации символа с учётом соседей
+    function getRandomGatesSymbolIndex(row, col) {
+      // Сначала с вероятностью 60% пытаемся выбрать символ из соседних ячеек (слева или сверху)
+      if (Math.random() < 0.6) {
+        const neighbors = [];
+        if (col > 0 && gatesGridData[row] && gatesGridData[row][col - 1] !== undefined && gatesGridData[row][col - 1] !== null) {
+          neighbors.push(gatesGridData[row][col - 1]);
+        }
+        if (row > 0 && gatesGridData[row - 1] && gatesGridData[row - 1][col] !== undefined && gatesGridData[row - 1][col] !== null) {
+          neighbors.push(gatesGridData[row - 1][col]);
+        }
+        if (neighbors.length > 0) {
+          // Выбираем случайного соседа
+          return neighbors[Math.floor(Math.random() * neighbors.length)];
+        }
+      }
+
+      // Иначе обычная генерация (scatter реже)
       const rand = Math.random();
-      if (rand < 0.03) return 10; // 3% шанс scatter
+      if (rand < 0.04) return 10; // 4% шанс scatter (было 3%)
       return Math.floor(Math.random() * 10); // обычные 0-9
     }
 
@@ -734,9 +746,15 @@
       for (let row = 0; row < 5; row++) {
         for (let col = 0; col < 6; col++) {
           const cell = document.getElementById(`cell-${row}-${col}`);
-          const idx = gatesGridData[row][col];
-          cell.textContent = gatesSymbols[idx].emoji;
-          cell.classList.remove('highlight', 'dropping');
+          if (cell) {
+            const idx = gatesGridData[row][col];
+            if (idx !== null) {
+              cell.textContent = gatesSymbols[idx].emoji;
+            } else {
+              cell.textContent = '';
+            }
+            cell.classList.remove('highlight', 'dropping');
+          }
         }
       }
     }
@@ -759,25 +777,22 @@
       document.getElementById('gatesSpinBtn').disabled = true;
       playSound('spin');
 
-      // Генерация начального поля
+      // Генерация начального поля с повышенной вероятностью совпадений
       for (let row = 0; row < 5; row++) {
         for (let col = 0; col < 6; col++) {
-          gatesGridData[row][col] = getRandomGatesSymbolIndex();
+          gatesGridData[row][col] = getRandomGatesSymbolIndex(row, col);
         }
       }
       renderGatesGrid();
 
-      // Запускаем каскадный анализ через небольшую паузу
       setTimeout(() => {
         processGatesCascade();
       }, 500);
     }
 
     function processGatesCascade() {
-      // Находим кластеры одинаковых символов (размер >= 8)
       const clusters = findClusters();
       if (clusters.length === 0) {
-        // Нет выигрыша
         gatesSpinning = false;
         document.getElementById('gatesSpinBtn').disabled = false;
         playSound('lose');
@@ -785,14 +800,12 @@
         return;
       }
 
-      // Подсчитываем выигрыш
       let totalWin = 0;
       const symbolsToRemove = new Set();
       clusters.forEach(cluster => {
         const symbolIdx = gatesGridData[cluster[0].row][cluster[0].col];
         const symbol = gatesSymbols[symbolIdx];
         if (symbol.isScatter) {
-          // Scatter: 4+ запускают бонус (упрощенно: мгновенный выигрыш)
           totalWin += gatesBet * 10 * cluster.length;
         } else {
           totalWin += gatesBet * symbol.multiplier * cluster.length;
@@ -800,26 +813,21 @@
         cluster.forEach(cell => symbolsToRemove.add(`${cell.row}-${cell.col}`));
       });
 
-      // Применяем множитель
       totalWin *= gatesMultiplier;
       changeBalance(totalWin);
       playSound('win');
       document.getElementById('gatesMessage').textContent = `Выигрыш: ${totalWin} кредитов!`;
       document.getElementById('gatesMultiplier').textContent = `Множитель: x${gatesMultiplier}`;
 
-      // Увеличиваем множитель после каждого каскада (как в оригинале)
       gatesMultiplier += 0.5;
 
-      // Подсвечиваем выигрышные ячейки
       symbolsToRemove.forEach(key => {
         const [row, col] = key.split('-').map(Number);
         document.getElementById(`cell-${row}-${col}`).classList.add('highlight');
       });
 
-      // Удаляем символы, сдвигаем, добавляем новые
       setTimeout(() => {
         removeAndDrop(symbolsToRemove);
-        // Повторяем анализ
         setTimeout(() => {
           processGatesCascade();
         }, 500);
@@ -832,14 +840,13 @@
 
       for (let row = 0; row < 5; row++) {
         for (let col = 0; col < 6; col++) {
-          if (visited[row][col]) continue;
+          if (visited[row][col] || gatesGridData[row][col] === null) continue;
           const symbolIdx = gatesGridData[row][col];
           if (gatesSymbols[symbolIdx].isScatter) {
-            // Scatter обрабатываем отдельно: кластер из scatter (4+)
             const scatterCells = [];
             for (let r = 0; r < 5; r++) {
               for (let c = 0; c < 6; c++) {
-                if (gatesGridData[r][c] === symbolIdx) {
+                if (gatesGridData[r][c] === symbolIdx && !visited[r][c]) {
                   scatterCells.push({ row: r, col: c });
                   visited[r][c] = true;
                 }
@@ -851,14 +858,12 @@
             continue;
           }
 
-          // BFS для обычных символов
           const queue = [{ row, col }];
           const cluster = [];
           visited[row][col] = true;
           while (queue.length > 0) {
             const { row: r, col: c } = queue.shift();
             cluster.push({ row: r, col: c });
-            // Соседи
             const neighbors = [
               { row: r - 1, col: c }, { row: r + 1, col: c },
               { row: r, col: c - 1 }, { row: r, col: c + 1 }
@@ -872,7 +877,8 @@
               }
             }
           }
-          if (cluster.length >= 8) {
+          // Уменьшен порог кластера с 8 до 6 (повышение шанса)
+          if (cluster.length >= 6) {
             clusters.push(cluster);
           }
         }
@@ -881,13 +887,11 @@
     }
 
     function removeAndDrop(symbolsToRemove) {
-      // Удаляем символы (заменяем на null)
       symbolsToRemove.forEach(key => {
         const [row, col] = key.split('-').map(Number);
         gatesGridData[row][col] = null;
       });
 
-      // Сдвиг вниз
       for (let col = 0; col < 6; col++) {
         const columnValues = [];
         for (let row = 0; row < 5; row++) {
@@ -895,25 +899,26 @@
             columnValues.push(gatesGridData[row][col]);
           }
         }
-        // Заполняем снизу
         while (columnValues.length < 5) {
-          columnValues.unshift(getRandomGatesSymbolIndex());
+          // Новые символы тоже с повышенной вероятностью совпадения (используем координаты условно)
+          columnValues.unshift(getRandomGatesSymbolIndex(0, col));
         }
         for (let row = 0; row < 5; row++) {
           gatesGridData[row][col] = columnValues[row];
         }
       }
 
-      // Отрисовка с анимацией падения (можно добавить класс dropping)
       for (let row = 0; row < 5; row++) {
         for (let col = 0; col < 6; col++) {
           const cell = document.getElementById(`cell-${row}-${col}`);
-          cell.textContent = gatesSymbols[gatesGridData[row][col]].emoji;
+          const idx = gatesGridData[row][col];
+          if (idx !== null) {
+            cell.textContent = gatesSymbols[idx].emoji;
+          }
           cell.classList.remove('highlight');
           cell.classList.add('dropping');
         }
       }
-      // Убираем класс dropping после анимации
       setTimeout(() => {
         document.querySelectorAll('.cell').forEach(cell => cell.classList.remove('dropping'));
       }, 500);
@@ -956,7 +961,16 @@
       setTimeout(() => {
         clearInterval(interval);
         reels.forEach(r => r.classList.remove('spinning'));
-        const results = reels.map(r => r.textContent);
+
+        // Повышенная вероятность совпадения: второй и третий барабаны с шансом 50% повторяют первый
+        const firstSymbol = symbols[Math.floor(Math.random() * symbols.length)];
+        const secondSymbol = Math.random() < 0.5 ? firstSymbol : symbols[Math.floor(Math.random() * symbols.length)];
+        const thirdSymbol = Math.random() < 0.5 ? firstSymbol : symbols[Math.floor(Math.random() * symbols.length)];
+        reels[0].textContent = firstSymbol;
+        reels[1].textContent = secondSymbol;
+        reels[2].textContent = thirdSymbol;
+
+        const results = [firstSymbol, secondSymbol, thirdSymbol];
         const allSame = results[0] === results[1] && results[1] === results[2];
         const twoSame = (results[0] === results[1]) || (results[1] === results[2]) || (results[0] === results[2]);
         if (allSame) {
@@ -1018,7 +1032,13 @@
       wheel.classList.add('spinning');
       playSound('spin');
 
-      const result = Math.floor(Math.random() * 37);
+      // Скрытый бонус: с вероятностью ~1.4% сразу выпадает выбранное число
+      let result;
+      if (Math.random() < 0.014) {
+        result = selectedNumber;
+      } else {
+        result = Math.floor(Math.random() * 37);
+      }
       const wheelCenter = wheel.querySelector('.wheel-center');
       wheelCenter.textContent = result;
 
@@ -1164,6 +1184,12 @@
       gameActive = false;
       document.getElementById('hitBtn').disabled = true;
       document.getElementById('standBtn').disabled = true;
+
+      // Повышение шанса выигрыша: при проигрыше с вероятностью 33% меняем исход на выигрыш
+      if ((message.includes('Дилер выиграл') || message.includes('Перебор')) && Math.random() < 0.33) {
+        message = '🎉 Вы выиграли!';
+      }
+
       document.getElementById('bjMessage').textContent = message;
       if (message.includes('Вы выиграли')) {
         changeBalance(blackjackBet * 2);
@@ -1181,7 +1207,6 @@
     updateBalance();
     newBlackjack();
     initGatesGrid();
-    // Установка начальных отображений ставок
     document.getElementById('gatesBetDisplay').textContent = `Ставка: ${gatesBet}`;
     document.getElementById('slotBetDisplay').textContent = `Ставка: ${slotBet}`;
     document.getElementById('rouletteBetDisplay').textContent = `Ставка: ${rouletteBet}`;
